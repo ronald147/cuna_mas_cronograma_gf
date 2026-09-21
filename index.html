@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Asignador de Cronogramas Cuna Más</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 20px; }
+    .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155; padding-bottom: 15px; margin-bottom: 20px; }
+    .controls { display: flex; gap: 15px; align-items: center; background: #1e293b; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+    select, input, button { padding: 8px 12px; border-radius: 6px; border: 1px solid #475569; background: #334155; color: white; font-size: 14px; }
+    button { background: #2563eb; cursor: pointer; border: none; font-weight: 500; }
+    button:hover { background: #1d4ed8; }
+    .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; }
+    .day-header { text-align: center; font-weight: bold; padding: 10px; background: #1e293b; border-radius: 6px; }
+    .day-card { background: #1e293b; border: 1px solid #334155; border-radius: 6px; min-height: 110px; padding: 8px; position: relative; }
+    .day-num { font-weight: bold; font-size: 14px; margin-bottom: 5px; }
+    .badge { font-size: 11px; padding: 3px 6px; border-radius: 4px; margin-bottom: 4px; display: block; line-height: 1.2; }
+    .badge-visita { background: #7f1d1d; color: #fecaca; }
+    .badge-ciai { background: #1e3a8a; color: #bfdbfe; }
+    .badge-tarea { background: #14532d; color: #bbf7d0; }
+    .btn-add { font-size: 10px; background: transparent; border: 1px dashed #64748b; color: #94a3b8; width: 100%; margin-top: 5px; border-radius: 4px; padding: 2px; }
+    .btn-add:hover { background: #334155; color: white; }
+    .legend { display: flex; gap: 15px; margin-top: 15px; font-size: 13px; }
+    .legend-item { display: flex; align-items: center; gap: 6px; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <h2>🗓️ Gestor y Asignador de Tareas - Cuna Más</h2>
+    <div>
+      <input type="file" id="fileInput" accept=".pdf,image/*">
+      <button onclick="subirDocumento()">📥 Subir Cronograma</button>
+    </div>
+  </div>
+
+  <div class="controls">
+    <label><strong>Seleccionar Guía:</strong></label>
+    <select id="selectGuia" onchange="cargarCalendario()">
+      <option value="">Cargando guías...</option>
+    </select>
+    <button onclick="descargarICS()">📲 Exportar a Google Calendar (.ics)</button>
+  </div>
+
+  <div class="legend">
+    <div class="legend-item"><span class="dot" style="background:#ef4444;"></span> Visita Domiciliaria</div>
+    <div class="legend-item"><span class="dot" style="background:#3b82f6;"></span> Sesión en CIAI</div>
+    <div class="legend-item"><span class="dot" style="background:#22c55e;"></span> Tarea Asignada (Espacio Libre)</div>
+  </div>
+
+  <br>
+
+  <div class="calendar-grid" id="calendarHeaders">
+    <div class="day-header">Lunes</div>
+    <div class="day-header">Martes</div>
+    <div class="day-header">Miércoles</div>
+    <div class="day-header">Jueves</div>
+    <div class="day-header">Viernes</div>
+    <div class="day-header">Sábado</div>
+    <div class="day-header">Domingo</div>
+  </div>
+
+  <div class="calendar-grid" id="calendarDays" style="margin-top: 8px;"></div>
+
+  <script>
+    let actividadesActuales = [];
+
+    async function cargarGuias() {
+      const res = await fetch('/api/guias');
+      const guias = await res.json();
+      const select = document.getElementById('selectGuia');
+      select.innerHTML = '';
+      if(guias.length === 0) {
+        select.innerHTML = '<option value="">Sin guías registradas</option>';
+        return;
+      }
+      guias.forEach(g => {
+        select.innerHTML += `<option value="${g.id}">${g.nombre}</option>`;
+      });
+      cargarCalendario();
+    }
+
+    async function subirDocumento() {
+      const file = document.getElementById('fileInput').files[0];
+      if(!file) return alert("Selecciona un PDF o foto escaneada");
+      
+      const formData = new FormData();
+      formData.append("file", file);
+
+      alert("Analizando documento con Inteligencia Artificial. Esto puede tardar unos segundos...");
+      const res = await fetch('/api/cargar-documento', { method: 'POST', body: formData });
+      const data = await res.json();
+
+      if(data.success) {
+        alert(`¡Listo! Se procesó el cronograma de: ${data.guia}`);
+        cargarGuias();
+      } else {
+        alert("Error al procesar: " + data.error);
+      }
+    }
+
+    async function cargarCalendario() {
+      const guiaId = document.getElementById('selectGuia').value;
+      if(!guiaId) return;
+
+      const res = await fetch(`/api/actividades/${guiaId}`);
+      actividadesActuales = await res.json();
+
+      const grid = document.getElementById('calendarDays');
+      grid.innerHTML = '';
+
+      // Setiembre 2026 inicia en Martes (offset de 1 casillero para el Lunes)
+      grid.innerHTML += `<div class="day-card" style="opacity:0.3;"></div>`;
+
+      for(let d = 1; d <= 30; d++) {
+        const actos = actividadesActuales.filter(a => a.dia === d);
+        let htmlBadges = '';
+        actos.forEach(a => {
+          let bClass = a.tipo === 'VISITA' ? 'badge-visita' : (a.tipo === 'CIAI' ? 'badge-ciai' : 'badge-tarea');
+          htmlBadges += `<span class="badge ${bClass}" title="${a.cuidadora}">• ${a.hora} ${a.tipo}: ${a.titulo.substring(0, 15)}...</span>`;
+        });
+
+        grid.innerHTML += `
+          <div class="day-card">
+            <div class="day-num">${d < 10 ? '0' + d : d}</div>
+            ${htmlBadges}
+            <button class="btn-add" onclick="asignarNuevaTarea(${d})">+ Asignar Tarea</button>
+          </div>
+        `;
+      }
+    }
+
+    async function asignarNuevaTarea(dia) {
+      const guiaId = document.getElementById('selectGuia').value;
+      const titulo = prompt(`Asignar nueva tarea para el día ${dia} de Setiembre:`);
+      if(!titulo) return;
+      const hora = prompt("Ingresa la hora (ejemplo: 10:00 AM):", "10:00 AM");
+      if(!hora) return;
+
+      await fetch('/api/asignar-tarea', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ guia_id: guiaId, dia: dia, mes: 9, anio: 2026, titulo: titulo, hora: hora })
+      });
+      cargarCalendario();
+    }
+
+    function descargarICS() {
+      const guiaId = document.getElementById('selectGuia').value;
+      if(!guiaId) return;
+      window.location.href = `/api/exportar-ics/${guiaId}`;
+    }
+
+    cargarGuias();
+  </script>
+</body>
+</html>
